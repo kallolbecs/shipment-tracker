@@ -33,6 +33,8 @@ function showTrackingSidebar() {
  * A 2-second delay is applied only after an API call is made.
  *
  * The code also checks a script property ("trackingExecutionState") for pause/resume/stop commands.
+ * Additionally, it updates a script property "currentRow" with the row number currently being processed
+ * (only for rows where an API call is made). Skipped rows are not reflected.
  */
 function processTracking(trackingColumn, courierColumn, statusColumn, statusTimeColumn, executionTimeColumn) {
   // Set initial execution state to "running".
@@ -106,8 +108,12 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
       }
       
       processedCount++;
+      
       var deliveryStatus = "";
       var statusDateTime = "";
+      
+      // Update currentRow property before making API call.
+      PropertiesService.getScriptProperties().setProperty("currentRow", i.toString());
       
       if (courierName === "DELHIVERY") {
         // -----------------------
@@ -192,14 +198,16 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
       errors.push("Row " + i + ": Exception - " + e.toString());
       sheet.getRange(i, statusColIndex).setValue("Error: " + e.toString());
     } finally {
-      // Apply 2-second delay only if an API call was made.
+      // Only pause if an API call was made.
       if (apiCalled) {
         Utilities.sleep(2000);
       }
     }
   }
   
-  // Clear the execution state at the end.
+  // Clear the currentRow property once processing is complete.
+  PropertiesService.getScriptProperties().deleteProperty("currentRow");
+  // Clear the execution state.
   PropertiesService.getScriptProperties().deleteProperty("trackingExecutionState");
   
   var summary = "Processed " + (lastRow - 1) + " rows.\nAPI called on " + processedCount + " rows.\nUpdated " + updateCount + " rows.";
@@ -239,6 +247,15 @@ function pauseResumeExecution() {
 function stopExecution() {
   PropertiesService.getScriptProperties().setProperty("trackingExecutionState", "stopped");
   return "Execution stopped.";
+}
+
+/**
+ * Returns the current row number being processed (where an API call is being made).
+ *
+ * @return {string} The current row number as a string, or an empty string if not set.
+ */
+function getCurrentRow() {
+  return PropertiesService.getScriptProperties().getProperty("currentRow") || "";
 }
 
 /**
