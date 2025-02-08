@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <style>
+      body { font-family: Arial, sans-serif; padding: 10px; }
+      label { font-weight: bold; }
+      input[type="text"] {
+        width: 100%;
+        padding: 5px;
+        margin-bottom: 10px;
+        box-sizing: border-box;
+      }
+      input[type="submit"] { padding: 5px 10px; }
+      #output {
+        margin-top: 15px;
+        white-space: pre-wrap;
+        color: red;
+        border-top: 1px solid #ccc;
+        padding-top: 10px;
+      }
+      /* Loader styling */
+      #loader {
+        display: none;
+        margin-top: 10px;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Shipment Tracker Settings</h2>
+    <form id="trackerForm">
+      <label for="trackingColumn">Tracking ID Column (e.g., A):</label>
+      <input type="text" id="trackingColumn" name="trackingColumn" required>
+
+      <label for="courierColumn">Courier Name Column (e.g., B):</label>
+      <input type="text" id="courierColumn" name="courierColumn" required>
+
+      <label for="statusColumn">Output: Status Column (e.g., C):</label>
+      <input type="text" id="statusColumn" name="statusColumn" required>
+
+      <label for="statusTimeColumn">Output: Status_time Column (e.g., D):</label>
+      <input type="text" id="statusTimeColumn" name="statusTimeColumn" required>
+
+      <label for="executionTimeColumn">Output: Execution_time Column (e.g., E):</label>
+      <input type="text" id="executionTimeColumn" name="executionTimeColumn" required>
+
+      <input type="submit" value="Start Tracking">
+    </form>
+    
+    <!-- Loader element shown during execution -->
+    <div id="loader">Loading... Please wait.</div>
+    
+    <div id="output"></div>
+
+    <script>
+      document.getElementById('trackerForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        // Get the submit button reference and disable it to prevent multiple clicks.
+        var submitButton = document.querySelector('#trackerForm input[type="submit"]');
+        submitButton.disabled = true;
+        
+        // Show the loader message.
+        document.getElementById('loader').style.display = "block";
+        // Clear any previous output.
+        document.getElementById('output').innerText = "";
+
+        // Gather form field values.
+        var trackingColumn = document.getElementById('trackingColumn').value;
+        var courierColumn = document.getElementById('courierColumn').value;
+        var statusColumn = document.getElementById('statusColumn').value;
+        var statusTimeColumn = document.getElementById('statusTimeColumn').value;
+        var executionTimeColumn = document.getElementById('executionTimeColumn').value;
+
+        // Call the server-side function processTracking.
+        google.script.run
+          .withSuccessHandler(function(response) {
+            document.getElementById('output').innerText = response;
+            // Hide the loader and re-enable the submit button.
+            document.getElementById('loader').style.display = "none";
+            submitButton.disabled = false;
+          })
+          .withFailureHandler(function(error) {
+            document.getElementById('output').innerText = "Error: " + error.message;
+            // Hide the loader and re-enable the submit button.
+            document.getElementById('loader').style.display = "none";
+            submitButton.disabled = false;
+          })
+          .processTracking(trackingColumn, courierColumn, statusColumn, statusTimeColumn, executionTimeColumn);
+      });
+    </script>
+  </body>
+</html>
