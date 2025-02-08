@@ -3,91 +3,207 @@
   <head>
     <base target="_top">
     <style>
-      body { font-family: Arial, sans-serif; padding: 10px; }
-      label { font-weight: bold; }
+      /* Base styling with a smaller font size */
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #f5f5f5;
+        margin: 0;
+        padding: 20px;
+        font-size: 12px; /* Smaller base font size */
+      }
+      /* Card-like container */
+      .container {
+        background-color: #fff;
+        border-radius: 8px;
+        padding: 15px;
+        max-width: 400px;
+        margin: 0 auto;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      }
+      h2 {
+        text-align: center;
+        color: #333;
+        margin-bottom: 15px;
+        font-size: 16px;
+      }
+      label {
+        font-weight: bold;
+        color: #555;
+        display: block;
+        margin-bottom: 3px;
+        white-space: nowrap; /* Prevent wrapping */
+      }
       input[type="text"] {
         width: 100%;
-        padding: 5px;
+        padding: 6px;
         margin-bottom: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
         box-sizing: border-box;
+        font-size: 12px;
       }
-      input[type="submit"] { padding: 5px 10px; }
-      #output {
-        margin-top: 15px;
-        white-space: pre-wrap;
-        color: red;
-        border-top: 1px solid #ccc;
-        padding-top: 10px;
+      input[type="submit"],
+      button {
+        padding: 8px 10px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
       }
-      /* Loader styling */
+      input[type="submit"] {
+        background-color: #28a745;
+        color: #fff;
+        width: 100%;
+      }
+      input[type="submit"]:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+      button {
+        background-color: #007bff;
+        color: #fff;
+        margin-right: 5px;
+      }
+      button:disabled {
+        background-color: #ccc;
+        cursor: not-allowed;
+      }
+      /* Container for Pause/Resume and Stop buttons */
+      .button-group {
+        text-align: center;
+        margin-bottom: 10px;
+      }
       #loader {
         display: none;
         margin-top: 10px;
         font-weight: bold;
+        color: #555;
+        text-align: center;
+        font-size: 12px;
+      }
+      #output {
+        margin-top: 10px;
+        white-space: pre-wrap;
+        color: #d9534f;
+        border-top: 1px solid #ccc;
+        padding-top: 10px;
+        font-size: 12px;
       }
     </style>
   </head>
   <body>
-    <h2>Shipment Tracker Settings</h2>
-    <form id="trackerForm">
-      <label for="trackingColumn">Tracking ID Column (e.g., A):</label>
-      <input type="text" id="trackingColumn" name="trackingColumn" required>
+    <div class="container">
+      <h2>Shipment Tracker</h2>
+      <form id="trackerForm">
+        <label for="trackingColumn">Tracking ID Column (e.g., A):</label>
+        <input type="text" id="trackingColumn" name="trackingColumn" required>
 
-      <label for="courierColumn">Courier Name Column (e.g., B):</label>
-      <input type="text" id="courierColumn" name="courierColumn" required>
+        <label for="courierColumn">Courier Name Column (e.g., B):</label>
+        <input type="text" id="courierColumn" name="courierColumn" required>
 
-      <label for="statusColumn">Output: Status Column (e.g., C):</label>
-      <input type="text" id="statusColumn" name="statusColumn" required>
+        <label for="statusColumn">Output: Status Column (e.g., C):</label>
+        <input type="text" id="statusColumn" name="statusColumn" required>
 
-      <label for="statusTimeColumn">Output: Status_time Column (e.g., D):</label>
-      <input type="text" id="statusTimeColumn" name="statusTimeColumn" required>
+        <label for="statusTimeColumn">Output: Status_time Column (e.g., D):</label>
+        <input type="text" id="statusTimeColumn" name="statusTimeColumn" required>
 
-      <label for="executionTimeColumn">Output: Execution_time Column (e.g., E):</label>
-      <input type="text" id="executionTimeColumn" name="executionTimeColumn" required>
+        <label for="executionTimeColumn">Output: Execution_time Column (e.g., E):</label>
+        <input type="text" id="executionTimeColumn" name="executionTimeColumn" required>
 
-      <input type="submit" value="Start Tracking">
-    </form>
-    
-    <!-- Loader element shown during execution -->
-    <div id="loader">Loading... Please wait.</div>
-    
-    <div id="output"></div>
+        <input type="submit" value="Start Tracking">
+      </form>
+
+      <div class="button-group">
+        <button id="pauseResumeBtn" disabled>Pause</button>
+        <button id="stopBtn" disabled>Stop Execution</button>
+      </div>
+
+      <div id="loader">Loading... Please wait.</div>
+      <div id="output"></div>
+    </div>
 
     <script>
+      // Flags to manage execution and pause state.
+      var isExecuting = false;
+      var isPaused = false;
+
+      // References to UI elements.
+      var submitButton = document.querySelector('#trackerForm input[type="submit"]');
+      var pauseResumeButton = document.getElementById('pauseResumeBtn');
+      var stopButton = document.getElementById('stopBtn');
+
+      // Start tracking on form submission.
       document.getElementById('trackerForm').addEventListener('submit', function(e) {
         e.preventDefault();
-        
-        // Get the submit button reference and disable it to prevent multiple clicks.
-        var submitButton = document.querySelector('#trackerForm input[type="submit"]');
+        if (isExecuting) return;
+        isExecuting = true;
+
+        // Disable submit and enable control buttons.
         submitButton.disabled = true;
-        
-        // Show the loader message.
+        pauseResumeButton.disabled = false;
+        pauseResumeButton.textContent = "Pause";
+        stopButton.disabled = false;
+
         document.getElementById('loader').style.display = "block";
-        // Clear any previous output.
         document.getElementById('output').innerText = "";
 
-        // Gather form field values.
         var trackingColumn = document.getElementById('trackingColumn').value;
         var courierColumn = document.getElementById('courierColumn').value;
         var statusColumn = document.getElementById('statusColumn').value;
         var statusTimeColumn = document.getElementById('statusTimeColumn').value;
         var executionTimeColumn = document.getElementById('executionTimeColumn').value;
 
-        // Call the server-side function processTracking.
         google.script.run
           .withSuccessHandler(function(response) {
             document.getElementById('output').innerText = response;
-            // Hide the loader and re-enable the submit button.
             document.getElementById('loader').style.display = "none";
             submitButton.disabled = false;
+            isExecuting = false;
+            pauseResumeButton.disabled = true;
+            stopButton.disabled = true;
           })
           .withFailureHandler(function(error) {
             document.getElementById('output').innerText = "Error: " + error.message;
-            // Hide the loader and re-enable the submit button.
             document.getElementById('loader').style.display = "none";
             submitButton.disabled = false;
+            isExecuting = false;
+            pauseResumeButton.disabled = true;
+            stopButton.disabled = true;
           })
           .processTracking(trackingColumn, courierColumn, statusColumn, statusTimeColumn, executionTimeColumn);
+      });
+
+      // Toggle Pause/Resume.
+      pauseResumeButton.addEventListener('click', function() {
+        google.script.run
+          .withSuccessHandler(function(response) {
+            if (response === "Paused") {
+              pauseResumeButton.textContent = "Resume";
+              isPaused = true;
+            } else if (response === "Resumed") {
+              pauseResumeButton.textContent = "Pause";
+              isPaused = false;
+            }
+            document.getElementById('output').innerText = "Pause/Resume: " + response;
+          })
+          .withFailureHandler(function(error) {
+            document.getElementById('output').innerText = "Error: " + error.message;
+          })
+          .pauseResumeExecution();
+      });
+
+      // Stop execution.
+      stopButton.addEventListener('click', function() {
+        google.script.run
+          .withSuccessHandler(function(response) {
+            document.getElementById('output').innerText = "Stop Execution: " + response;
+            pauseResumeButton.disabled = true;
+            stopButton.disabled = true;
+          })
+          .withFailureHandler(function(error) {
+            document.getElementById('output').innerText = "Error: " + error.message;
+          })
+          .stopExecution();
       });
     </script>
   </body>
