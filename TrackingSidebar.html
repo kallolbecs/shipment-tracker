@@ -9,7 +9,7 @@
         background-color: #f5f5f5;
         margin: 0;
         padding: 20px;
-        font-size: 12px; /* Smaller base font size */
+        font-size: 12px;
       }
       /* Card-like container */
       .container {
@@ -31,7 +31,7 @@
         color: #555;
         display: block;
         margin-bottom: 3px;
-        white-space: nowrap; /* Prevent wrapping */
+        white-space: nowrap;
       }
       input[type="text"] {
         width: 100%;
@@ -68,17 +68,23 @@
         background-color: #ccc;
         cursor: not-allowed;
       }
-      /* Container for Pause/Resume and Stop buttons */
+      /* Container for control buttons */
       .button-group {
         text-align: center;
         margin-bottom: 10px;
       }
+      /* Loader and progress display styling */
       #loader {
         display: none;
         margin-top: 10px;
         font-weight: bold;
         color: #555;
         text-align: center;
+        font-size: 12px;
+      }
+      #progressDisplay {
+        text-align: center;
+        margin-top: 10px;
         font-size: 12px;
       }
       #output {
@@ -97,62 +103,77 @@
       <form id="trackerForm">
         <label for="trackingColumn">Tracking ID Column (e.g., A):</label>
         <input type="text" id="trackingColumn" name="trackingColumn" required>
-
+        
         <label for="courierColumn">Courier Name Column (e.g., B):</label>
         <input type="text" id="courierColumn" name="courierColumn" required>
-
+        
         <label for="statusColumn">Output: Status Column (e.g., C):</label>
         <input type="text" id="statusColumn" name="statusColumn" required>
-
+        
         <label for="statusTimeColumn">Output: Status_time Column (e.g., D):</label>
         <input type="text" id="statusTimeColumn" name="statusTimeColumn" required>
-
+        
         <label for="executionTimeColumn">Output: Execution_time Column (e.g., E):</label>
         <input type="text" id="executionTimeColumn" name="executionTimeColumn" required>
-
+        
         <input type="submit" value="Start Tracking">
       </form>
-
+      
       <div class="button-group">
         <button id="pauseResumeBtn" disabled>Pause</button>
         <button id="stopBtn" disabled>Stop Execution</button>
       </div>
-
+      
       <div id="loader">Loading... Please wait.</div>
+      <div id="progressDisplay"></div>
       <div id="output"></div>
     </div>
-
+    
     <script>
-      // Flags to manage execution and pause state.
       var isExecuting = false;
       var isPaused = false;
-
-      // References to UI elements.
+      var pollingInterval;
+      
       var submitButton = document.querySelector('#trackerForm input[type="submit"]');
       var pauseResumeButton = document.getElementById('pauseResumeBtn');
       var stopButton = document.getElementById('stopBtn');
-
-      // Start tracking on form submission.
+      
+      // When the form is submitted, start processing.
       document.getElementById('trackerForm').addEventListener('submit', function(e) {
         e.preventDefault();
         if (isExecuting) return;
         isExecuting = true;
-
-        // Disable submit and enable control buttons.
+        
         submitButton.disabled = true;
         pauseResumeButton.disabled = false;
         pauseResumeButton.textContent = "Pause";
         stopButton.disabled = false;
-
+        
         document.getElementById('loader').style.display = "block";
         document.getElementById('output').innerText = "";
-
+        
         var trackingColumn = document.getElementById('trackingColumn').value;
         var courierColumn = document.getElementById('courierColumn').value;
         var statusColumn = document.getElementById('statusColumn').value;
         var statusTimeColumn = document.getElementById('statusTimeColumn').value;
         var executionTimeColumn = document.getElementById('executionTimeColumn').value;
-
+        
+        // Start polling every second for current row progress.
+        pollingInterval = setInterval(function() {
+          if (isExecuting) {
+            google.script.run.withSuccessHandler(function(currentRow) {
+              if (currentRow) {
+                document.getElementById('progressDisplay').innerText = "Currently Processing Row: " + currentRow;
+              } else {
+                document.getElementById('progressDisplay').innerText = "";
+              }
+            }).getCurrentRow();
+          } else {
+            document.getElementById('progressDisplay').innerText = "";
+            clearInterval(pollingInterval);
+          }
+        }, 1000);
+        
         google.script.run
           .withSuccessHandler(function(response) {
             document.getElementById('output').innerText = response;
@@ -161,6 +182,8 @@
             isExecuting = false;
             pauseResumeButton.disabled = true;
             stopButton.disabled = true;
+            clearInterval(pollingInterval);
+            document.getElementById('progressDisplay').innerText = "";
           })
           .withFailureHandler(function(error) {
             document.getElementById('output').innerText = "Error: " + error.message;
@@ -169,10 +192,12 @@
             isExecuting = false;
             pauseResumeButton.disabled = true;
             stopButton.disabled = true;
+            clearInterval(pollingInterval);
+            document.getElementById('progressDisplay').innerText = "";
           })
           .processTracking(trackingColumn, courierColumn, statusColumn, statusTimeColumn, executionTimeColumn);
       });
-
+      
       // Toggle Pause/Resume.
       pauseResumeButton.addEventListener('click', function() {
         google.script.run
@@ -191,8 +216,8 @@
           })
           .pauseResumeExecution();
       });
-
-      // Stop execution.
+      
+      // Stop Execution.
       stopButton.addEventListener('click', function() {
         google.script.run
           .withSuccessHandler(function(response) {
