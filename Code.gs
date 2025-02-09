@@ -28,13 +28,17 @@ function showTrackingSidebar() {
  *   executionTimeColumn: output column for Execution_time (e.g., "E")
  *
  * For each row (starting at row 2), if the courier is either "DELHIVERY" or "DTDC" and the Status cell
- * is not already "DELIVERED", the appropriate API is called to fetch shipment details.
+ * is not already "DELIVERED" (case insensitive), the appropriate API is called to fetch shipment details.
  *
- * A 2-second delay is applied only after an API call is made.
+ * For DELHIVERY rows, a GET call is made; for DTDC rows, the code attempts the primary DTDC API call
+ * and retries up to 4 attempts in total.
+ *
+ * A 2-second delay is applied only after a DELHIVERY API call.
  *
  * The code also checks a script property ("trackingExecutionState") for pause/resume/stop commands.
- * Additionally, it updates a script property "currentRow" with the row number currently being processed
- * (only for rows where an API call is made). Skipped rows are not reflected.
+ * Additionally, it updates script properties ("currentRow", "currentApi", and "currentResponseCode")
+ * with the row number, API short name, and response code currently being used (only for rows where an API call is made)
+ * so that the sidebar UI can display live progress.
  */
 function processTracking(trackingColumn, courierColumn, statusColumn, statusTimeColumn, executionTimeColumn) {
   // Set initial execution state to "running".
@@ -53,7 +57,7 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
     return "No data to process (only header row found).";
   }
   
-  // Update header row for the output columns if not already set.
+  // Ensure header cells exist.
   if (!sheet.getRange(1, statusColIndex).getValue()) {
     sheet.getRange(1, statusColIndex).setValue("Status");
   }
@@ -70,14 +74,12 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
   
   // Process each row starting from row 2.
   for (var i = 2; i <= lastRow; i++) {
-    
-    // Check the execution state before processing each row.
+    // Check the execution state before processing this row.
     var execState = PropertiesService.getScriptProperties().getProperty("trackingExecutionState");
     if (execState === "stopped") {
       errors.push("Execution stopped by user at row " + i);
       break;
     }
-    // If paused, wait until the state becomes "running" or "stopped".
     while (PropertiesService.getScriptProperties().getProperty("trackingExecutionState") === "paused") {
       Utilities.sleep(1000); // Wait 1 second.
       if (PropertiesService.getScriptProperties().getProperty("trackingExecutionState") === "stopped") {
@@ -87,38 +89,51 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
     }
     
     var apiCalled = false;
+    var currentCourier = "";
     try {
       // Read the courier name.
       var courierName = sheet.getRange(i, courierColIndex).getValue();
-      if (!courierName) continue; // Skip if empty.
+      if (!courierName) {
+        // Clear current row if skipping.
+        PropertiesService.getScriptProperties().setProperty("currentRow", "");
+        continue;
+      }
       courierName = courierName.toString().trim().toUpperCase();
+      currentCourier = courierName;
       
-      // Only process rows where courier is either DELHIVERY or DTDC.
-      if (courierName !== "DELHIVERY" && courierName !== "DTDC") continue;
+      // Only process rows for DELHIVERY or DTDC.
+      if (courierName !== "DELHIVERY" && courierName !== "DTDC") {
+        PropertiesService.getScriptProperties().setProperty("currentRow", "");
+        continue;
+      }
       
       // Skip row if the Status cell already contains "DELIVERED" (case insensitive).
       var currentStatus = sheet.getRange(i, statusColIndex).getValue();
-      if (currentStatus && currentStatus.toString().trim().toUpperCase() === "DELIVERED") continue;
+      if (currentStatus && currentStatus.toString().trim().toUpperCase() === "DELIVERED") {
+        PropertiesService.getScriptProperties().setProperty("currentRow", "");
+        continue;
+      }
       
       // Get the tracking ID.
       var trackingId = sheet.getRange(i, trackingColIndex).getValue();
       if (!trackingId) {
         errors.push("Row " + i + ": Tracking ID is empty.");
+        PropertiesService.getScriptProperties().setProperty("currentRow", "");
         continue;
       }
       
       processedCount++;
-      
       var deliveryStatus = "";
       var statusDateTime = "";
       
-      // Update currentRow property before making API call.
+      // Update current row property.
       PropertiesService.getScriptProperties().setProperty("currentRow", i.toString());
       
       if (courierName === "DELHIVERY") {
         // -----------------------
         // DELHIVERY API CALL (GET)
         // -----------------------
+        PropertiesService.getScriptProperties().setProperty("currentApi", "DEL");
         var apiUrl = "https://dlv-api.delhivery.com/v3/unified-tracking?wbn=" + encodeURIComponent(trackingId);
         var options = {
           "method": "get",
@@ -129,61 +144,79 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
         };
         var response = UrlFetchApp.fetch(apiUrl, options);
         var responseCode = response.getResponseCode();
+        // Update response code property.
+        PropertiesService.getScriptProperties().setProperty("currentResponseCode", responseCode.toString());
         apiCalled = true;
-        
-        if (responseCode !== 200) {
+        // Check if response code is in 20X range.
+        if (!(responseCode >= 200 && responseCode < 300)) {
           errors.push("Row " + i + ": Delhivery API call failed with status code " + responseCode);
           sheet.getRange(i, statusColIndex).setValue("Error: " + responseCode);
           continue;
         }
-        
         var jsonResponse = JSON.parse(response.getContentText());
         if (!jsonResponse.data || jsonResponse.data.length === 0) {
           errors.push("Row " + i + ": No data found in Delhivery API response.");
           sheet.getRange(i, statusColIndex).setValue("No data");
           continue;
         }
-        
         var shipmentData = jsonResponse.data[0];
-        deliveryStatus = shipmentData.status && shipmentData.status.status ? shipmentData.status.status : "";
-        statusDateTime = shipmentData.status && shipmentData.status.statusDateTime ? shipmentData.status.statusDateTime : "";
-        
+        deliveryStatus = (shipmentData.status && shipmentData.status.status) ? shipmentData.status.status : "";
+        statusDateTime = (shipmentData.status && shipmentData.status.statusDateTime) ? shipmentData.status.statusDateTime : "";
+      
       } else if (courierName === "DTDC") {
         // -----------------------
-        // DTDC API CALL (POST)
+        // DTDC API CALLS WITH RETRY (MAX 4 ATTEMPTS)
         // -----------------------
-        var apiUrl = "https://trackcourier.io/api/v1/get_checkpoints_table/5874d65fdac8775f005f43355e368693/dtdc/" + encodeURIComponent(trackingId);
-        var options = {
-          "method": "post",
-          "muteHttpExceptions": true
-        };
-        var response = UrlFetchApp.fetch(apiUrl, options);
-        var responseCode = response.getResponseCode();
-        apiCalled = true;
-        
-        if (responseCode !== 200) {
-          errors.push("Row " + i + ": DTDC API call failed with status code " + responseCode);
-          sheet.getRange(i, statusColIndex).setValue("Error: " + responseCode);
-          continue;
-        }
-        
-        var jsonResponse = JSON.parse(response.getContentText());
-        if (jsonResponse.Result !== "success") {
-          errors.push("Row " + i + ": DTDC API response not successful");
-          sheet.getRange(i, statusColIndex).setValue("Error: API not successful");
-          continue;
-        }
-        
-        // Use MostRecentStatus as the delivery status.
-        deliveryStatus = jsonResponse.MostRecentStatus || "";
-        
-        // Merge Date and Time from the first entry in the Checkpoints array.
-        if (jsonResponse.Checkpoints && jsonResponse.Checkpoints.length > 0) {
-          var firstCheckpoint = jsonResponse.Checkpoints[0];
-          statusDateTime = firstCheckpoint.Date + " " + firstCheckpoint.Time;
-        } else {
-          errors.push("Row " + i + ": DTDC API returned no checkpoints.");
-          sheet.getRange(i, statusColIndex).setValue("Error: No checkpoints");
+        var success = false;
+        var attempts = 0;
+        while (!success && attempts < 4) {
+          attempts++;
+          // Check execution state inside the retry loop.
+          var state = PropertiesService.getScriptProperties().getProperty("trackingExecutionState");
+          if (state === "stopped") {
+            errors.push("Row " + i + ": Execution stopped during DTDC retry.");
+            break;
+          }
+          while (PropertiesService.getScriptProperties().getProperty("trackingExecutionState") === "paused") {
+            Utilities.sleep(1000);
+            if (PropertiesService.getScriptProperties().getProperty("trackingExecutionState") === "stopped") {
+              errors.push("Row " + i + ": Execution stopped during pause in DTDC retry.");
+              break;
+            }
+          }
+          
+          try {
+            PropertiesService.getScriptProperties().setProperty("currentApi", "DTDC-P");
+            var primaryUrl = "https://trackcourier.io/api/v1/get_checkpoints_table/5874d65fdac8775f005f43355e368693/dtdc/" + encodeURIComponent(trackingId);
+            var primaryOptions = {
+              "method": "post",
+              "muteHttpExceptions": true
+            };
+            var primaryResponse = UrlFetchApp.fetch(primaryUrl, primaryOptions);
+            var primaryCode = primaryResponse.getResponseCode();
+            PropertiesService.getScriptProperties().setProperty("currentResponseCode", primaryCode.toString());
+            if (primaryCode >= 200 && primaryCode < 300) {
+              var primaryJson = JSON.parse(primaryResponse.getContentText());
+              if (primaryJson.Result === "success" && primaryJson.Checkpoints && primaryJson.Checkpoints.length > 0) {
+                deliveryStatus = primaryJson.MostRecentStatus || "";
+                var firstCheckpoint = primaryJson.Checkpoints[0];
+                statusDateTime = firstCheckpoint.Date + " " + firstCheckpoint.Time;
+                success = true;
+                break;
+              }
+            }
+          } catch (e) {
+            // Ignore exception.
+          }
+          
+          if (!success && attempts < 4) {
+            errors.push("Row " + i + ": DTDC primary API failed on attempt " + attempts + ", retrying...");
+            Utilities.sleep(2000); // Wait 2 seconds before retrying.
+          }
+        } // End of DTDC retry loop.
+        if (!success) {
+          errors.push("Row " + i + ": DTDC API call failed after " + attempts + " attempts.");
+          sheet.getRange(i, statusColIndex).setValue("Error: DTDC API call failed after " + attempts + " attempts.");
           continue;
         }
       }
@@ -198,16 +231,17 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
       errors.push("Row " + i + ": Exception - " + e.toString());
       sheet.getRange(i, statusColIndex).setValue("Error: " + e.toString());
     } finally {
-      // Only pause if an API call was made.
-      if (apiCalled) {
+      // For DELHIVERY calls, apply a 2-second delay if an API call was made.
+      if (currentCourier === "DELHIVERY" && apiCalled) {
         Utilities.sleep(2000);
       }
     }
   }
   
-  // Clear the currentRow property once processing is complete.
+  // Clear progress and execution state.
   PropertiesService.getScriptProperties().deleteProperty("currentRow");
-  // Clear the execution state.
+  PropertiesService.getScriptProperties().deleteProperty("currentApi");
+  PropertiesService.getScriptProperties().deleteProperty("currentResponseCode");
   PropertiesService.getScriptProperties().deleteProperty("trackingExecutionState");
   
   var summary = "Processed " + (lastRow - 1) + " rows.\nAPI called on " + processedCount + " rows.\nUpdated " + updateCount + " rows.";
@@ -219,11 +253,6 @@ function processTracking(trackingColumn, courierColumn, statusColumn, statusTime
 
 /**
  * Toggle the pause/resume state.
- * If currently running, sets state to "paused".
- * If currently paused, sets state to "running".
- * If execution is already stopped, returns a message.
- *
- * @return {string} A message indicating the new state.
  */
 function pauseResumeExecution() {
   var prop = PropertiesService.getScriptProperties();
@@ -241,8 +270,6 @@ function pauseResumeExecution() {
 
 /**
  * Set the execution state to "stopped".
- *
- * @return {string} A message indicating execution has been stopped.
  */
 function stopExecution() {
   PropertiesService.getScriptProperties().setProperty("trackingExecutionState", "stopped");
@@ -250,20 +277,28 @@ function stopExecution() {
 }
 
 /**
- * Returns the current row number being processed (where an API call is being made).
- *
- * @return {string} The current row number as a string, or an empty string if not set.
+ * Returns the current row number being processed.
  */
 function getCurrentRow() {
   return PropertiesService.getScriptProperties().getProperty("currentRow") || "";
 }
 
 /**
- * Helper function that converts a column letter (or letters) to its corresponding 1-indexed number.
- * For example, "A" → 1, "B" → 2, …, "AA" → 27, etc.
- *
- * @param {string} column - The column letter(s).
- * @return {number} The 1-indexed column number.
+ * Returns the current API being used (short form).
+ */
+function getCurrentApi() {
+  return PropertiesService.getScriptProperties().getProperty("currentApi") || "";
+}
+
+/**
+ * Returns the current API response code.
+ */
+function getCurrentResponseCode() {
+  return PropertiesService.getScriptProperties().getProperty("currentResponseCode") || "";
+}
+
+/**
+ * Helper function: converts a column letter to its corresponding 1-indexed number.
  */
 function columnToIndex(column) {
   var letters = column.toUpperCase().trim();
