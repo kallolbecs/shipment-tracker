@@ -87,6 +87,22 @@
         margin-top: 10px;
         font-size: 12px;
       }
+      #apiDisplay {
+        text-align: center;
+        margin-top: 5px;
+        font-size: 12px;
+      }
+      #responseDisplay {
+        text-align: center;
+        margin-top: 5px;
+        font-size: 12px;
+      }
+      #fallbackUrlDisplay {
+        text-align: center;
+        margin-top: 5px;
+        font-size: 12px;
+        word-break: break-all;
+      }
       #output {
         margin-top: 10px;
         white-space: pre-wrap;
@@ -126,6 +142,9 @@
       
       <div id="loader">Loading... Please wait.</div>
       <div id="progressDisplay"></div>
+      <div id="apiDisplay"></div>
+      <div id="responseDisplay"></div>
+      <div id="fallbackUrlDisplay"></div>
       <div id="output"></div>
     </div>
     
@@ -144,6 +163,7 @@
         if (isExecuting) return;
         isExecuting = true;
         
+        // Disable/enable appropriate buttons.
         submitButton.disabled = true;
         pauseResumeButton.disabled = false;
         pauseResumeButton.textContent = "Pause";
@@ -158,7 +178,7 @@
         var statusTimeColumn = document.getElementById('statusTimeColumn').value;
         var executionTimeColumn = document.getElementById('executionTimeColumn').value;
         
-        // Start polling every second for current row progress.
+        // Start polling every second for current row, API, response code, and fallback URL.
         pollingInterval = setInterval(function() {
           if (isExecuting) {
             google.script.run.withSuccessHandler(function(currentRow) {
@@ -168,8 +188,35 @@
                 document.getElementById('progressDisplay').innerText = "";
               }
             }).getCurrentRow();
+            
+            google.script.run.withSuccessHandler(function(apiShort) {
+              if (apiShort) {
+                document.getElementById('apiDisplay').innerText = "Using API: " + apiShort;
+              } else {
+                document.getElementById('apiDisplay').innerText = "";
+              }
+            }).getCurrentApi();
+            
+            google.script.run.withSuccessHandler(function(respCode) {
+              if (respCode) {
+                document.getElementById('responseDisplay').innerText = "Response Code: " + respCode;
+              } else {
+                document.getElementById('responseDisplay').innerText = "";
+              }
+            }).getCurrentResponseCode();
+
+            google.script.run.withSuccessHandler(function(fallbackUrl) {
+              if (fallbackUrl) {
+                document.getElementById('fallbackUrlDisplay').innerText = "Fallback API URL: " + fallbackUrl;
+              } else {
+                document.getElementById('fallbackUrlDisplay').innerText = "";
+              }
+            }).getCurrentFallbackUrl();
           } else {
             document.getElementById('progressDisplay').innerText = "";
+            document.getElementById('apiDisplay').innerText = "";
+            document.getElementById('responseDisplay').innerText = "";
+            document.getElementById('fallbackUrlDisplay').innerText = "";
             clearInterval(pollingInterval);
           }
         }, 1000);
@@ -184,6 +231,9 @@
             stopButton.disabled = true;
             clearInterval(pollingInterval);
             document.getElementById('progressDisplay').innerText = "";
+            document.getElementById('apiDisplay').innerText = "";
+            document.getElementById('responseDisplay').innerText = "";
+            document.getElementById('fallbackUrlDisplay').innerText = "";
           })
           .withFailureHandler(function(error) {
             document.getElementById('output').innerText = "Error: " + error.message;
@@ -194,11 +244,14 @@
             stopButton.disabled = true;
             clearInterval(pollingInterval);
             document.getElementById('progressDisplay').innerText = "";
+            document.getElementById('apiDisplay').innerText = "";
+            document.getElementById('responseDisplay').innerText = "";
+            document.getElementById('fallbackUrlDisplay').innerText = "";
           })
           .processTracking(trackingColumn, courierColumn, statusColumn, statusTimeColumn, executionTimeColumn);
       });
       
-      // Toggle Pause/Resume.
+      // Toggle Pause/Resume button.
       pauseResumeButton.addEventListener('click', function() {
         google.script.run
           .withSuccessHandler(function(response) {
@@ -217,7 +270,7 @@
           .pauseResumeExecution();
       });
       
-      // Stop Execution.
+      // Stop Execution button.
       stopButton.addEventListener('click', function() {
         google.script.run
           .withSuccessHandler(function(response) {
