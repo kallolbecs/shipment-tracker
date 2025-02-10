@@ -73,9 +73,7 @@ This project contains a Google Apps Script that tracks shipments using two diffe
 - **API Limits:** Be aware of any API rate limits. Adjust the delays if you encounter rate limiting issues.
 - **Error Messages:** Errors are logged in the sidebar output. Use these messages to help troubleshoot issues.
 
-## License
 
-This project is licensed under the [MIT License](LICENSE).
 
 ## Contributing
 
